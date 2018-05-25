@@ -118,27 +118,6 @@ private class AtomicHandle<ValueType> : NSObject {
     }
 }
 
-private class AtomicFlag: NSObject {
-    private var value = false
-
-    deinit {
-        Logger.info("[AtomicFlag] deinit")
-    }
-
-    func set() {
-        objc_sync_enter(self)
-        self.value = true
-        objc_sync_exit(self)
-    }
-
-    func isSet() -> Bool {
-        objc_sync_enter(self)
-        let result = value
-        objc_sync_exit(self)
-        return result
-    }
-}
-
 class PeerConnectionProxy: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDelegate {
 
 //    private class AtomicHandle<ValueType> : NSObject {
@@ -276,7 +255,6 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     private var cameraConstraints: RTCMediaConstraints
 
     private let handle = AtomicHandle<PeerConnectionClient>()
-    private let isTerminated = AtomicFlag()
     private let proxy = PeerConnectionProxy()
     private static var expiredProxies = [PeerConnectionProxy]()
 
@@ -392,9 +370,7 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
         SwiftAssertIsOnMainThread(#function)
 
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let localVideoSource = strongSelf.localVideoSource else {
                 Logger.debug("\(strongSelf.logTag) \(#function) Ignoring obsolete event in terminated client")
@@ -414,9 +390,7 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     public func setLocalVideoEnabled(enabled: Bool) {
         SwiftAssertIsOnMainThread(#function)
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         let completion = {
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let localVideoTrack = strongSelf.localVideoTrack else { return }
             guard let strongDelegate = strongSelf.delegate else { return }
@@ -424,7 +398,6 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
         }
 
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard strongSelf.peerConnection != nil else {
                 Logger.debug("\(strongSelf.logTag) \(#function) Ignoring obsolete event in terminated client")
@@ -484,9 +457,7 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     public func setAudioEnabled(enabled: Bool) {
         SwiftAssertIsOnMainThread(#function)
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard strongSelf.peerConnection != nil else {
                 Logger.debug("\(strongSelf.logTag) \(#function) Ignoring obsolete event in terminated client")
@@ -514,13 +485,8 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     public func createOffer() -> Promise<HardenedRTCSessionDescription> {
         SwiftAssertIsOnMainThread(#function)
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         let (promise, fulfill, reject) = Promise<HardenedRTCSessionDescription>.pending()
         let completion: ((RTCSessionDescription?, Error?) -> Void) = { (sdp, error) in
-            guard !isTerminatedCopy.isSet() else {
-                reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
-                return
-            }
             guard let strongSelf = handleCopy.get() else {
                 reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
                 return
@@ -547,10 +513,6 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
         }
 
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else {
-                reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
-                return
-            }
             guard let strongSelf = handleCopy.get() else {
                 reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
                 return
@@ -574,13 +536,8 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
 
     public func setLocalSessionDescriptionInternal(_ sessionDescription: HardenedRTCSessionDescription) -> Promise<Void> {
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         let (promise, fulfill, reject) = Promise<Void>.pending()
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else {
-                reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
-                return
-            }
             guard let strongSelf = handleCopy.get() else {
                 reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
                 return
@@ -608,13 +565,8 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     public func setLocalSessionDescription(_ sessionDescription: HardenedRTCSessionDescription) -> Promise<Void> {
         SwiftAssertIsOnMainThread(#function)
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         let (promise, fulfill, reject) = Promise<Void>.pending()
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else {
-                reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
-                return
-            }
             guard let strongSelf = handleCopy.get() else {
                 reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
                 return
@@ -643,12 +595,8 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     public func negotiateSessionDescription(remoteDescription: RTCSessionDescription, constraints: RTCMediaConstraints) -> Promise<HardenedRTCSessionDescription> {
         SwiftAssertIsOnMainThread(#function)
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         return setRemoteSessionDescription(remoteDescription)
             .then(on: PeerConnectionClient.signalingQueue) {
-                guard !isTerminatedCopy.isSet() else {
-                    return Promise(error: NSError(domain: "Obsolete client", code: 0, userInfo: nil))
-                }
                 guard let strongSelf = handleCopy.get() else {
                     return Promise(error: NSError(domain: "Obsolete client", code: 0, userInfo: nil))
                 }
@@ -659,13 +607,8 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     public func setRemoteSessionDescription(_ sessionDescription: RTCSessionDescription) -> Promise<Void> {
         SwiftAssertIsOnMainThread(#function)
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         let (promise, fulfill, reject) = Promise<Void>.pending()
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else {
-                reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
-                return
-            }
             guard let strongSelf = handleCopy.get() else {
                 reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
                 return
@@ -692,13 +635,8 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     private func negotiateAnswerSessionDescription(constraints: RTCMediaConstraints) -> Promise<HardenedRTCSessionDescription> {
         assertOnSignalingQueue()
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         let (promise, fulfill, reject) = Promise<HardenedRTCSessionDescription>.pending()
         let completion: ((RTCSessionDescription?, Error?) -> Void) = { (sdp, error) in
-            guard !isTerminatedCopy.isSet() else {
-                reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
-                return
-            }
             guard let strongSelf = handleCopy.get() else {
                 reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
                 return
@@ -732,10 +670,6 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
         }
 
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else {
-                reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
-                return
-            }
             guard let strongSelf = handleCopy.get() else {
                 reject(NSError(domain: "Obsolete client", code: 0, userInfo: nil))
                 return
@@ -761,9 +695,7 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
 
     public func addRemoteIceCandidate(_ candidate: RTCIceCandidate) {
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let peerConnection = strongSelf.peerConnection else {
                 Logger.debug("\(strongSelf.logTag) \(#function) Ignoring obsolete event in terminated client")
@@ -784,7 +716,6 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
 
         // Clear the handle immediately so that enqueued work is aborted
         // going forward.
-        isTerminated.set()
         handle.clear()
 
         // Clear the proxy immediately so that enqueued work is aborted
@@ -850,9 +781,7 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     public func sendDataChannelMessage(data: Data, description: String, isCritical: Bool) {
         SwiftAssertIsOnMainThread(#function)
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
 
             guard strongSelf.peerConnection != nil else {
@@ -896,17 +825,14 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     /** The data channel successfully received a data buffer. */
     internal func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         let completion: (OWSWebRTCProtosData) -> Void = { (dataChannelMessage) in
             SwiftAssertIsOnMainThread(#function)
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let strongDelegate = strongSelf.delegate else { return }
             strongDelegate.peerConnectionClient(strongSelf, received: dataChannelMessage)
         }
 
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard strongSelf.peerConnection != nil else {
                 Logger.debug("\(strongSelf.logTag) \(#function) Ignoring obsolete event in terminated client")
@@ -941,10 +867,8 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     /** Called when media is received on a new stream from remote peer. */
     internal func peerConnection(_ peerConnectionParam: RTCPeerConnection, didAdd stream: RTCMediaStream) {
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         let completion: (RTCVideoTrack) -> Void = { (remoteVideoTrack) in
             SwiftAssertIsOnMainThread(#function)
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let strongDelegate = strongSelf.delegate else { return }
 
@@ -954,7 +878,6 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
         }
 
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let peerConnection = strongSelf.peerConnection else {
                 Logger.debug("\(strongSelf.logTag) \(#function) Ignoring obsolete event in terminated client")
@@ -992,31 +915,26 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     /** Called any time the IceConnectionState changes. */
     internal func peerConnection(_ peerConnectionParam: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         let connectedCompletion : () -> Void = {
             SwiftAssertIsOnMainThread(#function)
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let strongDelegate = strongSelf.delegate else { return }
             strongDelegate.peerConnectionClientIceConnected(strongSelf)
         }
         let failedCompletion : () -> Void = {
             SwiftAssertIsOnMainThread(#function)
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let strongDelegate = strongSelf.delegate else { return }
             strongDelegate.peerConnectionClientIceFailed(strongSelf)
         }
         let disconnectedCompletion : () -> Void = {
             SwiftAssertIsOnMainThread(#function)
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let strongDelegate = strongSelf.delegate else { return }
             strongDelegate.peerConnectionClientIceDisconnected(strongSelf)
         }
 
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let peerConnection = strongSelf.peerConnection else {
                 Logger.debug("\(strongSelf.logTag) \(#function) Ignoring obsolete event in terminated client")
@@ -1051,17 +969,14 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     /** New ice candidate has been found. */
     internal func peerConnection(_ peerConnectionParam: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         let completion: (RTCIceCandidate) -> Void = { (candidate) in
             SwiftAssertIsOnMainThread(#function)
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let strongDelegate = strongSelf.delegate else { return }
             strongDelegate.peerConnectionClient(strongSelf, addedLocalIceCandidate: candidate)
         }
 
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let peerConnection = strongSelf.peerConnection else {
                 Logger.debug("\(strongSelf.logTag) \(#function) Ignoring obsolete event in terminated client")
@@ -1086,10 +1001,8 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
     /** New data channel has been opened. */
     internal func peerConnection(_ peerConnectionParam: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
         let handleCopy = self.handle
-        let isTerminatedCopy = self.isTerminated
         let completion: ([PendingDataChannelMessage]) -> Void = { (pendingMessages) in
             SwiftAssertIsOnMainThread(#function)
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             pendingMessages.forEach { message in
                 strongSelf.sendDataChannelMessage(data: message.data, description: message.description, isCritical: message.isCritical)
@@ -1097,7 +1010,6 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
         }
 
         PeerConnectionClient.signalingQueue.async {
-            guard !isTerminatedCopy.isSet() else { return }
             guard let strongSelf = handleCopy.get() else { return }
             guard let peerConnection = strongSelf.peerConnection else {
                 Logger.debug("\(strongSelf.logTag) \(#function) Ignoring obsolete event in terminated client")
