@@ -139,10 +139,89 @@ private class AtomicFlag: NSObject {
     }
 }
 
+class PeerConnectionProxy: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDelegate {
+
+//    private class AtomicHandle<ValueType> : NSObject {
+    var value: PeerConnectionClient?
+
+    func set(value: PeerConnectionClient) {
+        objc_sync_enter(self)
+        self.value = value
+        objc_sync_exit(self)
+    }
+
+    func get() -> PeerConnectionClient? {
+        objc_sync_enter(self)
+        let result = value
+        objc_sync_exit(self)
+        return result
+    }
+
+    func clear() {
+        Logger.info("\(logTag) \(#function)")
+
+        objc_sync_enter(self)
+        value = nil
+        objc_sync_exit(self)
+    }
+
+    // MARK: - RTCPeerConnectionDelegate
+
+    public func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {
+        self.get()?.peerConnection(peerConnection, didChange: stateChanged)
+    }
+
+    public func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
+        self.get()?.peerConnection(peerConnection, didAdd: stream)
+    }
+
+    public func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {
+        self.get()?.peerConnection(peerConnection, didRemove: stream)
+    }
+
+    public func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {
+        self.get()?.peerConnectionShouldNegotiate(peerConnection)
+    }
+
+    public func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        self.get()?.peerConnection(peerConnection, didChange: newState)
+    }
+
+    public func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
+        self.get()?.peerConnection(peerConnection, didChange: newState)
+    }
+
+    public func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
+        self.get()?.peerConnection(peerConnection, didGenerate: candidate)
+    }
+
+    public func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {
+        self.get()?.peerConnection(peerConnection, didRemove: candidates)
+    }
+
+    public func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
+        self.get()?.peerConnection(peerConnection, didOpen: dataChannel)
+    }
+
+    // MARK: - RTCDataChannelDelegate
+
+    public func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
+        self.get()?.dataChannelDidChangeState(dataChannel)
+    }
+
+    public func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
+        self.get()?.dataChannel(dataChannel, didReceiveMessageWith: buffer)
+    }
+
+    public func dataChannel(_ dataChannel: RTCDataChannel, didChangeBufferedAmount amount: UInt64) {
+        self.get()?.dataChannel(dataChannel, didChangeBufferedAmount: amount)
+    }
+}
+
 /**
  * `PeerConnectionClient` is our interface to WebRTC.
  *
- * It is primarily a wrapper around `RTCPeerConnection`, which is responsible for sending and receiving our call data 
+ * It is primarily a wrapper around `RTCPeerConnection`, which is responsible for sending and receiving our call data
  * including audio, video, and some post-connected signaling (hangup, add video)
  */
 class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDelegate {
@@ -198,6 +277,8 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
 
     private let handle = AtomicHandle<PeerConnectionClient>()
     private let isTerminated = AtomicFlag()
+    private let proxy = PeerConnectionProxy()
+    private static var expiredProxies = [PeerConnectionProxy]()
 
     init(iceServers: [RTCIceServer], delegate: PeerConnectionClientDelegate, callDirection: CallDirection, useTurnOnly: Bool) {
         SwiftAssertIsOnMainThread(#function)
@@ -224,11 +305,12 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
 
         super.init()
 
+        proxy.set(value: self)
         handle.set(value: self)
 
         peerConnection = factory.peerConnection(with: configuration,
                                                 constraints: connectionConstraints,
-                                                delegate: self)
+                                                delegate: proxy)
         createAudioSender()
         createVideoSender()
 
@@ -259,7 +341,7 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
         configuration.isOrdered = true
         let dataChannel = peerConnection.dataChannel(forLabel: Identifiers.dataChannelSignaling.rawValue,
                                                      configuration: configuration)
-        dataChannel.delegate = self
+        dataChannel.delegate = proxy
 
         assert(self.dataChannel == nil)
         self.dataChannel = dataChannel
@@ -705,6 +787,11 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
         isTerminated.set()
         handle.clear()
 
+        // Clear the proxy immediately so that enqueued work is aborted
+        // going forward.
+        PeerConnectionClient.expiredProxies.append(proxy)
+        proxy.clear()
+
         // Don't use [weak self]; we always want to perform terminateInternal().
         PeerConnectionClient.signalingQueue.async {
             self.terminateInternal()
@@ -1025,7 +1112,7 @@ class PeerConnectionClient: NSObject, RTCPeerConnectionDelegate, RTCDataChannelD
                 owsFail("\(strongSelf.logTag) in \(#function) dataChannel unexpectedly set twice.")
             }
             strongSelf.dataChannel = dataChannel
-            dataChannel.delegate = strongSelf
+            dataChannel.delegate = strongSelf.proxy
 
             let pendingMessages = strongSelf.pendingDataChannelMessages
             strongSelf.pendingDataChannelMessages = []
